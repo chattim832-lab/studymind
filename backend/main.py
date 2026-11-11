@@ -10,6 +10,9 @@ from pydantic import BaseModel, EmailStr, Field
 from pwdlib import PasswordHash
 from pymongo.errors import DuplicateKeyError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import File, UploadFile
+from gridfs import AsyncGridFSBucket
+from io import BytesIO
 
 from database import client, db
 
@@ -45,6 +48,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="StudyMind API", lifespan=lifespan)
+
+pdf_bucket = AsyncGridFSBucket(db)
 
 app.add_middleware(
     CORSMiddleware,
@@ -189,4 +194,211 @@ async def get_current_user(
         "name": user["name"],
         "email": user["email"]
     }
+
+# Modèle pour ajouter un cours
+class CourseCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=1000)
+
+
+# Ajouter un nouveau cours
+@app.post("/courses", status_code=201)
+async def create_course(
+    course: CourseCreate,
+    current_user: dict = Depends(get_current_user)
+):
+    title = course.title.strip()
+
+    if not title:
+        raise HTTPException(
+            status_code=422,
+            detail="Le titre du cours est obligatoire"
+        )
+
+    new_course = {
+        "title": title,
+        "description": course.description,
+        "user_id": current_user["id"],
+        "created_at": datetime.now(timezone.utc)
+    }
+
+    result = await db["courses"].insert_one(new_course)
+
+    return {
+        "id": str(result.inserted_id),
+        "title": title,
+        "description": course.description,
+        "message": "Cours ajouté avec succès"
+    }
+
+
+# Afficher les cours de l'étudiant connecté
+@app.get("/courses")
+async def get_courses(
+    current_user: dict = Depends(get_current_user)
+):
+    courses = []
+
+    cursor = db["courses"].find(
+        {"user_id": current_user["id"]}
+    ).sort("created_at", -1)
+
+    async for course in cursor:
+        courses.append({
+            "id": str(course["_id"]),
+            "title": course["title"],
+            "description": course["description"]
+        })
+
+    return courses
+
+
+# Supprimer un cours
+@app.delete("/courses/{course_id}")
+async def delete_course(
+    course_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    # Vérifier que l'identifiant est valide
+    if not ObjectId.is_valid(course_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Identifiant du cours invalide"
+        )
+
+    # Supprimer uniquement un cours appartenant à l'étudiant
+    result = await db["courses"].delete_one({
+        "_id": ObjectId(course_id),
+        "user_id": current_user["id"]
+    })
+
+    if result.deleted_count == 0:
+        raise HTTPException(
+            status_code=404,
+            detail="Cours introuvable"
+        )
+
+    return {
+        "message": "Cours supprimé avec succès"
+    }
+
+
+# Ajouter un PDF à un cours
+@app.post("/courses/{course_id}/pdfs", status_code=201)
+async def upload_course_pdf(
+    course_id: str,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user)
+):
+    # Vérifier l'identifiant du cours
+    if not ObjectId.is_valid(course_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Identifiant du cours invalide"
+        )
+
+    # Vérifier que le cours appartient à l'étudiant
+    course = await db["courses"].find_one({
+        "_id": ObjectId(course_id),
+        "user_id": current_user["id"]
+    })
+
+    if not course:
+        raise HTTPException(
+            status_code=404,
+            detail="Cours introuvable"
+        )
+
+    # Vérifier le nom du fichier
+    filename = (file.filename or "").replace("\\", "/").split("/")[-1]
+
+    if not filename.lower().endswith(".pdf"):
+        raise HTTPException(
+            status_code=400,
+            detail="Seuls les fichiers PDF sont acceptés"
+        )
+
+    # Lire le fichier avec une limite de 10 Mo
+    max_size = 10 * 1024 * 1024
+    content = await file.read(max_size + 1)
+    await file.close()
+
+    if len(content) > max_size:
+        raise HTTPException(
+            status_code=413,
+            detail="Le PDF ne doit pas dépasser 10 Mo"
+        )
+
+    # Vérifier la signature de base d'un PDF
+    if not content.startswith(b"%PDF-"):
+        raise HTTPException(
+            status_code=400,
+            detail="Fichier PDF invalide"
+        )
+
+    # Stocker le PDF dans MongoDB GridFS
+    file_id = await pdf_bucket.upload_from_stream(
+        filename,
+        BytesIO(content),
+        metadata={
+            "course_id": course_id,
+            "user_id": current_user["id"],
+            "content_type": "application/pdf"
+        }
+    )
+
+    return {
+        "id": str(file_id),
+        "filename": filename,
+        "course_id": course_id,
+        "message": "PDF ajouté avec succès"
+    }
+
+
+# Afficher les PDF d'un cours
+@app.get("/courses/{course_id}/pdfs")
+async def get_course_pdfs(
+    course_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    # Vérifier l'identifiant du cours
+    if not ObjectId.is_valid(course_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Identifiant du cours invalide"
+        )
+
+    # Vérifier que le cours appartient à l'étudiant
+    course = await db["courses"].find_one({
+        "_id": ObjectId(course_id),
+        "user_id": current_user["id"]
+    })
+
+    if not course:
+        raise HTTPException(
+            status_code=404,
+            detail="Cours introuvable"
+        )
+
+    # Récupérer les PDF associés au cours
+    pdfs = []
+
+    cursor = db["fs.files"].find({
+        "metadata.course_id": course_id,
+        "metadata.user_id": current_user["id"]
+    }).sort("uploadDate", -1)
+
+    async for pdf in cursor:
+        pdfs.append({
+            "id": str(pdf["_id"]),
+            "filename": pdf["filename"],
+            "size_bytes": pdf["length"]
+        })
+
+    return pdfs
+
+
+
+
+
 
