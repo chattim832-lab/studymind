@@ -254,11 +254,56 @@ async def get_courses(
 
 
 # Supprimer un cours
+
+# Supprimer un cours et ses PDF
 @app.delete("/courses/{course_id}")
 async def delete_course(
     course_id: str,
     current_user: dict = Depends(get_current_user)
 ):
+    # 1. Vérifier l'identifiant du cours
+    if not ObjectId.is_valid(course_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Identifiant du cours invalide"
+        )
+
+    # 2. Vérifier que le cours appartient à l'étudiant
+    course_filter = {
+        "_id": ObjectId(course_id),
+        "user_id": current_user["id"]
+    }
+
+    course = await db["courses"].find_one(course_filter)
+
+    if not course:
+        raise HTTPException(
+            status_code=404,
+            detail="Cours introuvable"
+        )
+
+    # 3. Récupérer les identifiants des PDF associés
+    pdf_ids = []
+
+    cursor = db["fs.files"].find({
+        "metadata.course_id": course_id,
+        "metadata.user_id": current_user["id"]
+    })
+
+    async for pdf in cursor:
+        pdf_ids.append(pdf["_id"])
+
+    # 4. Supprimer les PDF de GridFS
+    for pdf_id in pdf_ids:
+        await pdf_bucket.delete(pdf_id)
+
+    # 5. Supprimer le cours
+    await db["courses"].delete_one(course_filter)
+
+    return {
+        "message": "Cours et PDF associés supprimés avec succès"
+    }
+
     # Vérifier que l'identifiant est valide
     if not ObjectId.is_valid(course_id):
         raise HTTPException(
