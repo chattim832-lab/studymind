@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi import File, UploadFile
 from gridfs import AsyncGridFSBucket
 from io import BytesIO
-
+from chat_service import answer_question_from_pdf
 from database import client, db
 
 
@@ -443,6 +443,57 @@ async def get_course_pdfs(
     return pdfs
 
 
+# Modele de la question du chatbot
+class ChatRequest(BaseModel):
+    course_id: str
+    pdf_id: str
+    question: str = Field(min_length=1, max_length=2000)
+
+
+# API Chatbot StudyMind
+@app.post("/chat")
+async def chat_with_pdf(
+    data: ChatRequest,
+    current_user: dict = Depends(get_current_user)
+):
+
+    # 1. Verifier les identifiants
+    if not ObjectId.is_valid(data.course_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Identifiant du cours invalide"
+        )
+
+    if not ObjectId.is_valid(data.pdf_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Identifiant du PDF invalide"
+        )
+
+    # 2. Verifier la question
+    if not data.question.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="La question est obligatoire"
+        )
+
+    # 3. Lire le PDF et generer une reponse avec Gemini
+    try:
+        result = await answer_question_from_pdf(
+            pdf_id=data.pdf_id,
+            course_id=data.course_id,
+            user_id=current_user["id"],
+            question=data.question
+        )
+
+    except ValueError as error:
+        raise HTTPException(
+            status_code=404,
+            detail=str(error)
+        ) from error
+
+    # 4. Retourner la reponse et les pages sources
+    return result
 
 
 
