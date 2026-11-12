@@ -1,128 +1,167 @@
 "use client";
-import { useRouter } from "next/navigation";
+
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
+import AuthLayout from "../_components/AuthLayout";
+
+const API_URL = "http://127.0.0.1:8001";
+
+const inputClass =
+  "w-full border-0 border-b border-[#D7CED4] bg-transparent px-0 py-3 text-[#29344F] outline-none transition placeholder:text-[#A59DA8] focus:border-[#525871] focus:outline-none";
 
 export default function LoginPage() {
   const router = useRouter();
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  async function handleLogin(e) {
-    e.preventDefault();
-    setMessage("");
+  // Connexion avec FastAPI
+  async function handleLogin(event) {
+    event.preventDefault();
+
     setLoading(true);
+    setError("");
 
     try {
       const response = await fetch(
-        "http://127.0.0.1:8000/auth/login",
+        API_URL + "/auth/login",
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ email, password }),
+          body: JSON.stringify({
+            email: email.trim(),
+            password: password,
+          }),
         }
       );
 
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        setMessage(
+        throw new Error(
           typeof data.detail === "string"
             ? data.detail
-            : "Erreur de connexion"
+            : "Connexion impossible. Vérifiez vos informations."
         );
-        return;
       }
 
-      // Sauvegarder temporairement le token pour les tests
-     sessionStorage.setItem(
-  "studymind_token",
-  data.access_token
-);
+      if (!data.access_token) {
+        throw new Error("Aucun token reçu du serveur.");
+      }
 
-router.replace("/dashboard");
+      // Sauvegarder le JWT
+      sessionStorage.setItem(
+        "studymind_token",
+        data.access_token
+      );
 
-    } catch (error) {
-      setMessage("Impossible de contacter FastAPI.");
+      // Aller au Dashboard
+      router.replace("/dashboard");
+
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Erreur de connexion."
+      );
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-100 p-6">
-      <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-lg">
-
-        <h1 className="text-center text-3xl font-bold text-blue-700">
-          StudyMind
-        </h1>
-
-        <h2 className="mt-3 text-center text-xl font-semibold text-gray-800">
-          Connexion
-        </h2>
-
-        <p className="mt-2 text-center text-sm text-gray-500">
-          Connectez-vous à votre espace étudiant
-        </p>
-
-        <form onSubmit={handleLogin} className="mt-6 space-y-4">
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700">
-              Email
-            </label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              autoComplete="email"
-              placeholder="Votre email"
-              className="mt-1 w-full rounded-lg border border-gray-300 p-3 text-gray-900"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700">
-              Mot de passe
-            </label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              autoComplete="current-password"
-              placeholder="Votre mot de passe"
-              className="mt-1 w-full rounded-lg border border-gray-300 p-3 text-gray-900"
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full rounded-lg bg-blue-700 p-3 font-semibold text-white hover:bg-blue-800 disabled:opacity-60"
+    <AuthLayout
+      title="Login"
+      subtitle="Heureux de te retrouver ! Connecte-toi pour continuer à apprendre."
+      footer={
+        <>
+          Pas encore de compte ?{" "}
+          <Link
+            href="/register"
+            className="font-semibold text-[#525871] hover:underline"
           >
-            {loading ? "Connexion..." : "Se connecter"}
-          </button>
+           S&apos;inscrire
+          </Link>
+        </>
+      }
+    >
 
-          {message && (
-            <p role="status" className="text-center text-sm text-gray-700">
-              {message}
-            </p>
-          )}
+      <form
+        onSubmit={handleLogin}
+        className="space-y-7"
+      >
 
-          <p className="text-center text-sm text-gray-600">
-            Pas encore de compte ?{" "}
-            <Link href="/register" className="text-blue-700 hover:underline">
-              S inscrire
-            </Link>
+        {/* EMAIL */}
+        <div>
+          <label
+            htmlFor="login-email"
+            className="block text-xs font-medium text-[#857C91]"
+          >
+            Email
+          </label>
+
+          <input
+            id="login-email"
+            type="email"
+            value={email}
+            onChange={(event) =>
+              setEmail(event.target.value)
+            }
+            placeholder="exemple@email.com"
+            autoComplete="email"
+            required
+            className={inputClass}
+          />
+        </div>
+
+        {/* PASSWORD */}
+        <div>
+          <label
+            htmlFor="login-password"
+            className="block text-xs font-medium text-[#857C91]"
+          >
+            Mot de passe
+          </label>
+
+          <input
+            id="login-password"
+            type="password"
+            value={password}
+            onChange={(event) =>
+              setPassword(event.target.value)
+            }
+            placeholder="Ton mot de passe"
+            autoComplete="current-password"
+            required
+            className={inputClass}
+          />
+        </div>
+
+        {/* ERREUR */}
+        {error && (
+          <p
+            role="alert"
+            className="rounded-lg bg-[#F9E8E7] px-4 py-3 text-sm text-[#8A3F48]"
+          >
+            {error}
           </p>
-        </form>
-      </div>
-    </main>
+        )}
+
+        {/* LOGIN BUTTON */}
+        <button
+          type="submit"
+          disabled={loading}
+          className="w-full rounded-xl bg-[#525871] py-3.5 font-medium text-white transition hover:bg-[#3D435A] disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {loading ? "Connexion..." : "Login"}
+        </button>
+
+      </form>
+    </AuthLayout>
   );
 }
