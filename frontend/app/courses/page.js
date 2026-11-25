@@ -98,7 +98,7 @@ function MenuLink({ href, icon, children, active = false }) {
 }
 
 function courseIdOf(course) {
-  return course.id || course._id;
+  return String(course.id || course._id || "");
 }
 
 function formatSize(bytes) {
@@ -113,12 +113,14 @@ export default function CoursesPage() {
   const [courses, setCourses] = useState([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
+
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
   const [expandedId, setExpandedId] = useState("");
   const [pdfsByCourse, setPdfsByCourse] = useState({});
   const [loadingPdfsId, setLoadingPdfsId] = useState("");
+
   const [selectedFiles, setSelectedFiles] = useState({});
   const [uploadingId, setUploadingId] = useState("");
   const [deletingId, setDeletingId] = useState("");
@@ -176,7 +178,7 @@ export default function CoursesPage() {
     };
   }, [router]);
 
-  // 2. Recuperer le JWT
+  // 2. Recuperer le token
   function getToken() {
     const token = sessionStorage.getItem("studymind_token");
 
@@ -196,7 +198,7 @@ export default function CoursesPage() {
 
     try {
       const response = await fetch(
-        API_URL + "/courses/" + id + "/pdfs",
+        API_URL + "/courses/" + encodeURIComponent(id) + "/pdfs",
         {
           headers: {
             Authorization: "Bearer " + token,
@@ -275,7 +277,7 @@ export default function CoursesPage() {
 
     try {
       const response = await fetch(
-        API_URL + "/courses/" + id + "/pdfs",
+        API_URL + "/courses/" + encodeURIComponent(id) + "/pdfs",
         {
           method: "POST",
           headers: {
@@ -296,7 +298,7 @@ export default function CoursesPage() {
         throw new Error(
           typeof data.detail === "string"
             ? data.detail
-            : "Échec de l'envoi du PDF."
+            : "Erreur lors de l'envoi du PDF."
         );
       }
 
@@ -318,9 +320,11 @@ export default function CoursesPage() {
 
   // 6. Supprimer un cours
   async function handleDelete(id) {
-    if (!window.confirm("Supprimer ce cours et tous ses PDF ?")) {
-      return;
-    }
+    const confirmed = window.confirm(
+      "Voulez-vous supprimer ce cours et tous ses PDF ?"
+    );
+
+    if (!confirmed) return;
 
     const token = getToken();
     if (!token) return;
@@ -331,7 +335,7 @@ export default function CoursesPage() {
 
     try {
       const response = await fetch(
-        API_URL + "/courses/" + id,
+        API_URL + "/courses/" + encodeURIComponent(id),
         {
           method: "DELETE",
           headers: {
@@ -371,7 +375,7 @@ export default function CoursesPage() {
     router.replace("/login");
   }
 
-  // 8. Recherche
+  // 8. Rechercher un cours
   const filteredCourses = courses.filter((course) =>
     (course.title || course.name || "")
       .toLowerCase()
@@ -386,7 +390,7 @@ export default function CoursesPage() {
 
         <div className="mb-8 px-3 pt-3">
           <h1
-            className="text-3xl font-semibold tracking-tight"
+            className="text-3xl font-semibold"
             style={{ fontFamily: "Georgia, serif" }}
           >
             StudyMind
@@ -420,7 +424,7 @@ export default function CoursesPage() {
             Your learning companion
           </p>
 
-          <p className="mt-2 text-xs leading-5 text-[#857C91]">
+          <p className="mt-2 text-xs text-[#857C91]">
             Organise tes cours et révise à ton rythme.
           </p>
         </div>
@@ -434,10 +438,9 @@ export default function CoursesPage() {
         </button>
       </aside>
 
-      {/* CONTENU PRINCIPAL */}
+      {/* CONTENU */}
       <main className="min-w-0 flex-1 px-5 py-7 md:px-9">
 
-        {/* TITRE */}
         <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
           <div>
             <h2
@@ -454,14 +457,15 @@ export default function CoursesPage() {
 
           <Link
             href="/courses/new"
-            className="rounded-full bg-[#525871] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#857C91]"
+            className="rounded-full bg-[#525871] px-5 py-3 text-sm font-semibold text-white hover:bg-[#857C91]"
           >
             + Ajouter un cours
           </Link>
         </header>
 
-        {/* RECHERCHE ET STATISTIQUES */}
+        {/* RECHERCHE */}
         <section className="mb-7 flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-[#E8DADD] bg-white p-5 shadow-sm">
+
           <div>
             <p className="text-sm text-[#857C91]">
               Cours enregistrés
@@ -487,7 +491,6 @@ export default function CoursesPage() {
           </label>
         </section>
 
-        {/* MESSAGES */}
         {error && (
           <p
             role="alert"
@@ -498,21 +501,17 @@ export default function CoursesPage() {
         )}
 
         {message && (
-          <p className="mb-5 rounded-xl bg-[#F1E9E7] p-4 text-sm text-[#525871]">
+          <p className="mb-5 rounded-xl bg-[#F1E9E7] p-4 text-sm">
             {message}
           </p>
         )}
 
         {/* LISTE DES COURS */}
         {loading ? (
-          <p className="text-sm text-[#857C91]">
-            Chargement des cours...
-          </p>
+          <p>Chargement des cours...</p>
         ) : filteredCourses.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-[#CD9FA0] bg-white p-8 text-center">
-            <p className="text-[#857C91]">
-              Aucun cours à afficher.
-            </p>
+            <p>Aucun cours à afficher.</p>
 
             <Link
               href="/courses/new"
@@ -523,17 +522,33 @@ export default function CoursesPage() {
           </div>
         ) : (
           <div className="grid items-start gap-6 lg:grid-cols-2">
+
             {filteredCourses.map((course, index) => {
               const id = courseIdOf(course);
+              const title = course.title || course.name || "Cours";
               const pdfs = pdfsByCourse[id] || [];
               const isOpen = expandedId === id;
 
               return (
                 <article
                   key={id}
-                  className="overflow-hidden rounded-3xl border border-[#E8DADD] bg-white shadow-sm"
+                  className="group relative isolate overflow-hidden rounded-3xl border border-[#E8DADD] bg-white shadow-sm transition-shadow hover:shadow-lg"
                 >
-                  {/* COUVERTURE DU COURS */}
+
+                  {/* NOUVEAU : TOUTE LA CARTE EST CLIQUABLE */}
+                  <Link
+                    href={
+                      "/courses/" + encodeURIComponent(id)
+                    }
+                    className="absolute inset-0 z-10 cursor-pointer rounded-3xl focus-visible:outline-2 focus-visible:outline-[#525871]"
+                    aria-label={"Ouvrir le cours " + title}
+                  >
+                    <span className="sr-only">
+                      Ouvrir le cours {title}
+                    </span>
+                  </Link>
+
+                  {/* COUVERTURE */}
                   <div
                     className="relative h-36 overflow-hidden p-5"
                     style={{
@@ -544,18 +559,19 @@ export default function CoursesPage() {
 
                     <div className="absolute bottom-0 left-9 h-20 w-20 rotate-12 rounded-xl border border-white/40 bg-white/10" />
 
-                    <span className="relative rounded-full bg-white/70 px-3 py-1 text-xs text-[#525871]">
+                    <span className="relative rounded-full bg-white/70 px-3 py-1 text-xs">
                       StudyMind Course
                     </span>
                   </div>
 
-                  {/* INFORMATIONS DU COURS */}
+                  {/* INFORMATIONS */}
                   <div className="p-5">
+
                     <h3
                       className="text-2xl"
                       style={{ fontFamily: "Georgia, serif" }}
                     >
-                      {course.title || course.name || "Cours"}
+                      {title}
                     </h3>
 
                     {course.description && (
@@ -564,13 +580,18 @@ export default function CoursesPage() {
                       </p>
                     )}
 
-                    {/* BOUTONS */}
-                    <div className="mt-5 flex flex-wrap gap-2">
+                    <p className="mt-4 text-sm font-medium text-[#CD9FA0]">
+                      Ouvrir le cours →
+                    </p>
+
+                    {/* Z-20 : LES BOUTONS RESTENT CLIQUABLES */}
+                    <div className="relative z-20 mt-5 flex flex-wrap gap-2">
+
                       <button
                         type="button"
                         onClick={() => togglePdfs(id)}
                         aria-expanded={isOpen}
-                        className="rounded-full bg-[#F5E3E0] px-4 py-2 text-sm font-medium text-[#525871] hover:bg-[#F2C1A3]"
+                        className="rounded-full bg-[#F5E3E0] px-4 py-2 text-sm font-medium hover:bg-[#F2C1A3]"
                       >
                         {isOpen
                           ? "Masquer les PDF"
@@ -591,10 +612,11 @@ export default function CoursesPage() {
                       </button>
                     </div>
 
-                    {/* FICHIERS PDF */}
+                    {/* PDF : RESTENT ACCESSIBLES */}
                     {isOpen && (
-                      <div className="mt-5 border-t border-[#EFE5E6] pt-5">
-                        <h4 className="mb-3 text-sm font-semibold">
+                      <div className="relative z-20 mt-5 border-t border-[#EFE5E6] pt-5">
+
+                        <h4 className="mb-3 font-semibold">
                           Fichiers PDF
                         </h4>
 
@@ -619,7 +641,7 @@ export default function CoursesPage() {
                                   {pdf.filename || "Document PDF"}
                                 </span>
 
-                                <span className="shrink-0 text-xs text-[#857C91]">
+                                <span className="text-xs text-[#857C91]">
                                   {formatSize(pdf.size_bytes)}
                                 </span>
                               </li>
@@ -629,9 +651,12 @@ export default function CoursesPage() {
 
                         {/* UPLOAD PDF */}
                         <form
-                          onSubmit={(event) => handleUpload(event, id)}
+                          onSubmit={(event) =>
+                            handleUpload(event, id)
+                          }
                           className="mt-5 space-y-3"
                         >
+
                           <label className="block text-sm font-semibold">
                             Ajouter un PDF (10 Mo max)
                           </label>
@@ -645,7 +670,7 @@ export default function CoursesPage() {
                                 [id]: event.target.files?.[0] || null,
                               }))
                             }
-                            className="block w-full rounded-xl border border-[#E8DADD] p-3 text-sm file:mr-3 file:rounded-full file:border-0 file:bg-[#F5E3E0] file:px-3 file:py-2 file:text-[#525871]"
+                            className="block w-full rounded-xl border border-[#E8DADD] p-3 text-sm"
                           />
 
                           <button
