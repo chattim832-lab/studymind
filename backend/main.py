@@ -55,6 +55,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
+        "http://localhost:3002",
         "http://127.0.0.1:3000"
     ],
     allow_methods=["*"],
@@ -494,6 +495,103 @@ async def chat_with_pdf(
 
     # 4. Retourner la reponse et les pages sources
     return result
+
+# SPRINT 3 - Supprimer un seul PDF d'un cours
+@app.delete("/courses/{course_id}/pdfs/{pdf_id}")
+async def delete_course_pdf(
+    course_id: str,
+    pdf_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    # 1. Verifier les identifiants
+    if not ObjectId.is_valid(course_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Identifiant du cours invalide"
+        )
+
+    if not ObjectId.is_valid(pdf_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Identifiant du PDF invalide"
+        )
+
+    # 2. Verifier que le cours appartient a l'utilisateur
+    course = await db["courses"].find_one({
+        "_id": ObjectId(course_id),
+        "user_id": current_user["id"]
+    })
+
+    if not course:
+        raise HTTPException(
+            status_code=404,
+            detail="Cours introuvable"
+        )
+
+    # 3. Verifier que le PDF appartient au bon cours
+    pdf = await db["fs.files"].find_one({
+        "_id": ObjectId(pdf_id),
+        "metadata.course_id": course_id,
+        "metadata.user_id": current_user["id"]
+    })
+
+    if not pdf:
+        raise HTTPException(
+            status_code=404,
+            detail="PDF introuvable dans ce cours"
+        )
+
+    # 4. Supprimer le fichier depuis MongoDB GridFS
+    await pdf_bucket.delete(ObjectId(pdf_id))
+
+    # 5. Confirmer la suppression
+    return {
+        "message": "PDF supprime avec succes",
+        "pdf_id": pdf_id,
+        "course_id": course_id
+    }
+
+# SPRINT 3 : Chatbot sur tous les PDF d'un cours
+class CourseChatRequest(BaseModel):
+    course_id: str
+    question: str = Field(min_length=1, max_length=2000)
+
+
+@app.post("/chat/course")
+async def chat_with_course(
+    data: CourseChatRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    # 1. Verifier l'identifiant du cours
+    if not ObjectId.is_valid(data.course_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Identifiant du cours invalide"
+        )
+
+    # 2. Verifier la question
+    if not data.question.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="La question est obligatoire"
+        )
+
+    # 3. Importer le service du chatbot multi-PDF
+    from course_chat_service import answer_question_from_course
+
+    # 4. Generer la reponse
+    try:
+        return await answer_question_from_course(
+            course_id=data.course_id,
+            user_id=current_user["id"],
+            question=data.question
+        )
+
+    except ValueError as error:
+        raise HTTPException(
+            status_code=404,
+            detail=str(error)
+        ) from error
 
 
 
