@@ -6,7 +6,16 @@ import Link from "next/link";
 
 const API_URL = "http://127.0.0.1:8001";
 
-// Icones de navigation
+function getId(item) {
+  return String(item?.id || item?._id || "");
+}
+
+function getError(data, fallback) {
+  return typeof data?.detail === "string"
+    ? data.detail
+    : fallback;
+}
+
 function Icon({ name }) {
   return (
     <svg
@@ -57,22 +66,13 @@ function Icon({ name }) {
       )}
 
       {name === "sparkles" && (
-        <>
-          <path d="m12 3 1.9 6.1L20 11l-6.1 1.9L12 19l-1.9-6.1L4 11l6.1-1.9L12 3Z" />
-          <path d="m19 18 .5 1.5L21 20l-1.5.5L19 22l-.5-1.5L17 20l1.5-.5L19 18Z" />
-        </>
+        <path d="m12 3 1.9 6.1L20 11l-6.1 1.9L12 19l-1.9-6.1L4 11l6.1-1.9L12 3Z" />
       )}
     </svg>
   );
 }
 
-// Lien dans la sidebar
-function MenuLink({
-  href,
-  icon,
-  children,
-  active = false,
-}) {
+function MenuLink({ href, icon, children, active = false }) {
   return (
     <Link
       href={href}
@@ -89,49 +89,71 @@ function MenuLink({
   );
 }
 
-// Identifiant d'un cours ou PDF
-function getId(item) {
-  return item.id || item._id || item.course_id || item.pdf_id;
+// Charger les PDF depuis FastAPI
+async function fetchCoursePdfs(courseId, token) {
+  const response = await fetch(
+    API_URL +
+      "/courses/" +
+      encodeURIComponent(courseId) +
+      "/pdfs",
+    {
+      headers: {
+        Authorization: "Bearer " + token,
+      },
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error("Impossible de charger les PDF du cours.");
+  }
+
+  const data = await response.json();
+
+  return Array.isArray(data) ? data : data.pdfs || [];
 }
 
-// Afficher le texte avec les mots en gras
+// Afficher le gras dans les reponses Gemini
 function formatAnswer(answer) {
   return String(answer || "")
     .split(/(\\[^]+\\*)/g)
-    .map((part, index) =>
-      part.startsWith("*") && part.endsWith("*") ? (
-        <strong key={index}>
-          {part.slice(2, -2)}
-        </strong>
-      ) : (
-        <span key={index}>{part}</span>
-      )
-    );
+    .map((part, index) => {
+      if (part.startsWith("*") && part.endsWith("*")) {
+        return (
+          <strong key={index}>
+            {part.slice(2, -2)}
+          </strong>
+        );
+      }
+
+      return <span key={index}>{part}</span>;
+    });
 }
 
 export default function ChatPage() {
   const router = useRouter();
 
-  // Cours
   const [courses, setCourses] = useState([]);
   const [courseId, setCourseId] = useState("");
 
-  // PDF
   const [pdfs, setPdfs] = useState([]);
   const [pdfId, setPdfId] = useState("");
 
-  // Question et reponse
+  // pdf = un PDF, course = tout le cours
+  const [scope, setScope] = useState("pdf");
+
   const [question, setQuestion] = useState("");
   const [result, setResult] = useState(null);
 
-  // Chargement et erreurs
   const [loadingCourses, setLoadingCourses] = useState(true);
   const [loadingPdfs, setLoadingPdfs] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loadingAnswer, setLoadingAnswer] = useState(false);
+
   const [error, setError] = useState("");
 
-  // 1. Charger les cours
+  // 1. Charger les cours et lire les parametres de l'URL
   useEffect(() => {
+    let active = true;
+
     const token = sessionStorage.getItem("studymind_token");
 
     if (!token) {
@@ -139,9 +161,7 @@ export default function ChatPage() {
       return;
     }
 
-    let active = true;
-
-    async function loadCourses() {
+    async function initializeChat() {
       try {
         const response = await fetch(API_URL + "/courses", {
           headers: {
@@ -160,10 +180,63 @@ export default function ChatPage() {
 
         const data = await response.json();
 
-        if (active) {
-          setCourses(
-            Array.isArray(data) ? data : data.courses || []
+        const loadedCourses = Array.isArray(data)
+          ? data
+          : data.courses || [];
+
+        if (!active) return;
+
+        setCourses(loadedCourses);
+
+        // Exemple : /chat?course_id=123&pdf_id=456
+        const params = new URLSearchParams(
+          window.location.search
+        );
+
+        const initialCourseId = params.get("course_id") || "";
+        const initialPdfId = params.get("pdf_id") || "";
+
+        const initialScope =
+          params.get("scope") === "course"
+            ? "course"
+            : "pdf";
+
+        const courseExists = loadedCourses.some(
+          (course) => getId(course) === initialCourseId
+        );
+
+        if (!initialCourseId || !courseExists) {
+          return;
+        }
+
+        // Selection automatique du cours
+        setCourseId(initialCourseId);
+        setScope(initialScope);
+
+        setLoadingPdfs(true);
+
+        try {
+          const loadedPdfs = await fetchCoursePdfs(
+            initialCourseId,
+            token
           );
+
+          if (!active) return;
+
+          setPdfs(loadedPdfs);
+
+          // Selection automatique du PDF
+          if (
+            initialScope === "pdf" &&
+            initialPdfId &&
+            loadedPdfs.some(
+              (pdf) => getId(pdf) === initialPdfId
+            )
+          ) {
+            setPdfId(initialPdfId);
+          }
+        } finally {
+          if (active) setLoadingPdfs(false);
         }
       } catch (err) {
         if (active) {
@@ -176,14 +249,14 @@ export default function ChatPage() {
       }
     }
 
-    loadCourses();
+    initializeChat();
 
     return () => {
       active = false;
     };
   }, [router]);
 
-  // 2. Charger les PDF du cours choisi
+  // 2. Changer le cours manuellement
   async function handleCourseChange(event) {
     const selectedId = event.target.value;
 
@@ -207,29 +280,12 @@ export default function ChatPage() {
     setLoadingPdfs(true);
 
     try {
-      const response = await fetch(
-        API_URL + "/courses/" + selectedId + "/pdfs",
-        {
-          headers: {
-            Authorization: "Bearer " + token,
-          },
-        }
+      const loadedPdfs = await fetchCoursePdfs(
+        selectedId,
+        token
       );
 
-      if (response.status === 401) {
-        router.replace("/login");
-        return;
-      }
-
-      if (!response.ok) {
-        throw new Error("Impossible de charger les PDF.");
-      }
-
-      const data = await response.json();
-
-      setPdfs(
-        Array.isArray(data) ? data : data.pdfs || []
-      );
+      setPdfs(loadedPdfs);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -237,14 +293,24 @@ export default function ChatPage() {
     }
   }
 
-  // 3. Envoyer la question au Backend
+  // 3. Choisir le mode de discussion
+  function handleScopeChange(newScope) {
+    setScope(newScope);
+    setResult(null);
+    setError("");
+  }
+
+  // 4. Envoyer la question a Gemini
   async function handleSend(event) {
     event.preventDefault();
 
-    if (!courseId || !pdfId || !question.trim()) {
-      setError(
-        "Choisissez un cours, un PDF et une question."
-      );
+    if (!courseId || !question.trim()) {
+      setError("Choisissez un cours et écrivez une question.");
+      return;
+    }
+
+    if (scope === "pdf" && !pdfId) {
+      setError("Choisissez un fichier PDF.");
       return;
     }
 
@@ -255,36 +321,59 @@ export default function ChatPage() {
       return;
     }
 
-    setLoading(true);
+    setLoadingAnswer(true);
     setError("");
     setResult(null);
 
+    // Route actuelle pour un PDF
+    // Nouvelle route Sprint 3 pour tout le cours
+    const endpoint =
+      scope === "course"
+        ? "/chat/course"
+        : "/chat";
+
+    const body =
+      scope === "course"
+        ? {
+            course_id: courseId,
+            question: question.trim(),
+          }
+        : {
+            course_id: courseId,
+            pdf_id: pdfId,
+            question: question.trim(),
+          };
+
     try {
-      const response = await fetch(API_URL + "/chat", {
+      const response = await fetch(API_URL + endpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: "Bearer " + token,
         },
-        body: JSON.stringify({
-          course_id: courseId,
-          pdf_id: pdfId,
-          question: question.trim(),
-        }),
+        body: JSON.stringify(body),
       });
-
-      const data = await response.json();
 
       if (response.status === 401) {
         router.replace("/login");
         return;
       }
 
+      const data = await response.json().catch(() => ({}));
+
       if (!response.ok) {
+        if (scope === "course" && response.status === 404) {
+          throw new Error(
+            "Le mode Tout le cours nécessite encore " +
+              "la nouvelle API du Sprint 3."
+          );
+        }
+
         throw new Error(
-          typeof data.detail === "string"
-            ? data.detail
-            : "Erreur lors de la génération de la réponse."
+          getError(
+            data,
+            "Impossible de générer la réponse."
+          )
         );
       }
 
@@ -292,26 +381,33 @@ export default function ChatPage() {
     } catch (err) {
       setError(err.message);
     } finally {
-      setLoading(false);
+      setLoadingAnswer(false);
     }
   }
 
-  // 4. Deconnexion
+  // 5. Deconnexion
   function handleLogout() {
     sessionStorage.removeItem("studymind_token");
     router.replace("/login");
   }
 
-  // 5. Interface
+  const selectedCourse = courses.find(
+    (course) => getId(course) === courseId
+  );
+
+  const selectedPdf = pdfs.find(
+    (pdf) => getId(pdf) === pdfId
+  );
+
   return (
     <div className="min-h-screen bg-[#FAF6F4] text-[#525871] md:flex">
 
       {/* SIDEBAR */}
-      <aside className="flex w-full shrink-0 flex-col border-b border-[#E7DADD] bg-[#F3E9E7] p-5 md:sticky md:top-0 md:h-screen md:w-60 md:border-b-0 md:border-r">
+      <aside className="flex w-full shrink-0 flex-col border-b border-[#E7DADD] bg-[#F3E9E7] p-5 md:sticky md:top-0 md:h-screen md:w-60 md:border-r">
 
         <div className="mb-8 px-3 pt-3">
           <h1
-            className="text-3xl font-semibold tracking-tight"
+            className="text-3xl font-semibold"
             style={{ fontFamily: "Georgia, serif" }}
           >
             StudyMind
@@ -326,11 +422,8 @@ export default function ChatPage() {
           Menu
         </p>
 
-        <nav className="flex flex-col gap-2">
-          <MenuLink
-            href="/dashboard"
-            icon="dashboard"
-          >
+        <nav className="space-y-2">
+          <MenuLink href="/dashboard" icon="dashboard">
             Dashboard
           </MenuLink>
 
@@ -338,11 +431,7 @@ export default function ChatPage() {
             Mes cours
           </MenuLink>
 
-          <MenuLink
-            href="/chat"
-            icon="chat"
-            active
-          >
+          <MenuLink href="/chat" icon="chat" active>
             Chatbot IA
           </MenuLink>
         </nav>
@@ -352,15 +441,15 @@ export default function ChatPage() {
             Your learning companion
           </p>
 
-          <p className="mt-2 text-xs leading-5 text-[#857C91]">
-            Pose tes questions et comprends tes cours
-            avec ton assistant intelligent.
+          <p className="mt-2 text-xs text-[#857C91]">
+            Pose tes questions et révise à ton rythme.
           </p>
         </div>
 
         <button
+          type="button"
           onClick={handleLogout}
-          className="mt-5 flex items-center gap-3 rounded-xl px-4 py-3 text-sm text-[#857C91] hover:bg-white/70"
+          className="mt-5 flex items-center gap-3 rounded-xl px-4 py-3 text-sm text-[#857C91] hover:bg-white"
         >
           <Icon name="logout" />
           Déconnexion
@@ -372,7 +461,7 @@ export default function ChatPage() {
 
         {/* EN-TETE */}
         <header className="mb-8">
-          <p className="mb-2 text-xs uppercase tracking-[0.25em] text-[#CD9FA0]">
+          <p className="mb-2 text-xs uppercase tracking-widest text-[#CD9FA0]">
             YOUR AI STUDY ASSISTANT
           </p>
 
@@ -384,65 +473,104 @@ export default function ChatPage() {
           </h2>
 
           <p className="mt-3 text-sm text-[#857C91]">
-            Ton assistant pour comprendre et réviser tes cours ♡
+            Ton assistant intelligent pour réviser tes cours ♡
           </p>
         </header>
 
         {/* BANNIERE */}
         <section
-          className="relative mb-8 overflow-hidden rounded-3xl p-7 text-white shadow-sm md:p-9"
+          className="mb-8 rounded-3xl p-7 text-white"
           style={{
             background:
-              "linear-gradient(115deg, #525871 0%, #857C91 60%, #CD9FA0 100%)",
+              "linear-gradient(115deg, #525871, #857C91, #CD9FA0)",
           }}
         >
-          <div className="absolute -right-8 -top-12 h-48 w-48 rounded-full border-[22px] border-white/10" />
-
-          <div className="absolute bottom-0 right-24 h-24 w-24 rounded-full bg-white/10 blur-xl" />
-
-          <div className="relative">
-            <p className="mb-3 flex items-center gap-2 text-xs uppercase tracking-widest text-white/70">
-              <Icon name="sparkles" />
-              StudyMind Intelligence
-            </p>
-
-            <h3
-              className="max-w-xl text-3xl md:text-4xl"
-              style={{ fontFamily: "Georgia, serif" }}
-            >
-              Ask, learn & understand.
-            </h3>
-
-            <p className="mt-3 max-w-lg text-sm leading-6 text-white/80">
-              Choisis ton PDF, pose ta question en français
-              ou en anglais et découvre une réponse basée
-              sur ton cours, avec les pages sources.
-            </p>
+          <div className="mb-3 flex items-center gap-2 text-sm text-white/80">
+            <Icon name="sparkles" />
+            StudyMind Intelligence
           </div>
+
+          <h3
+            className="text-3xl"
+            style={{ fontFamily: "Georgia, serif" }}
+          >
+            Ask, learn & understand.
+          </h3>
+
+          <p className="mt-3 text-sm text-white/85">
+            Choisis un document ou un cours complet
+            pour discuter avec Gemini.
+          </p>
         </section>
 
         {/* FORMULAIRE */}
         <section className="rounded-3xl border border-[#E8DADD] bg-white p-6 shadow-sm md:p-8">
 
-          <div className="mb-7">
-            <h3
-              className="text-2xl"
-              style={{ fontFamily: "Georgia, serif" }}
-            >
-              Pose ta question
-            </h3>
-
-            <p className="mt-2 text-sm text-[#857C91]">
-              Sélectionne ton cours puis ton document PDF.
-            </p>
-          </div>
-
-          <form
-            onSubmit={handleSend}
-            className="space-y-6"
+          <h3
+            className="mb-3 text-2xl"
+            style={{ fontFamily: "Georgia, serif" }}
           >
+            Pose ta question
+          </h3>
 
-            {/* COURS */}
+          <p className="mb-7 text-sm text-[#857C91]">
+            Tu peux discuter avec un PDF ou tous les PDF
+            du même cours.
+          </p>
+
+          <form onSubmit={handleSend} className="space-y-6">
+
+            {/* SELECTION DU MODE */}
+            <div>
+              <label className="mb-3 block text-sm font-semibold">
+                Mode de discussion
+              </label>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+
+                <button
+                  type="button"
+                  onClick={() => handleScopeChange("pdf")}
+                  aria-pressed={scope === "pdf"}
+                  className={
+                    "rounded-2xl border p-4 text-left transition " +
+                    (scope === "pdf"
+                      ? "border-[#525871] bg-[#F5E3E0]"
+                      : "border-[#E8DADD] bg-[#FAF6F4]")
+                  }
+                >
+                  <span className="block font-semibold">
+                    Un seul PDF
+                  </span>
+
+                  <span className="mt-1 block text-xs text-[#857C91]">
+                    Poser des questions sur un document.
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleScopeChange("course")}
+                  aria-pressed={scope === "course"}
+                  className={
+                    "rounded-2xl border p-4 text-left transition " +
+                    (scope === "course"
+                      ? "border-[#525871] bg-[#F5E3E0]"
+                      : "border-[#E8DADD] bg-[#FAF6F4]")
+                  }
+                >
+                  <span className="block font-semibold">
+                    Tout le cours
+                  </span>
+
+                  <span className="mt-1 block text-xs text-[#857C91]">
+                    Poser des questions sur tous les PDF.
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            {/* SELECTION DU COURS */}
             <div>
               <label
                 htmlFor="chat-course"
@@ -456,7 +584,7 @@ export default function ChatPage() {
                 value={courseId}
                 onChange={handleCourseChange}
                 disabled={loadingCourses}
-                className="w-full rounded-xl border border-[#E8DADD] bg-[#FAF6F4] px-4 py-3 text-sm text-[#525871] outline-none focus:border-[#CD9FA0] disabled:opacity-60"
+                className="w-full rounded-xl border border-[#E8DADD] bg-[#FAF6F4] px-4 py-3 text-sm outline-none disabled:opacity-60"
               >
                 <option value="">
                   {loadingCourses
@@ -475,47 +603,63 @@ export default function ChatPage() {
               </select>
             </div>
 
-            {/* PDF */}
-            <div>
-              <label
-                htmlFor="chat-pdf"
-                className="mb-2 block text-sm font-semibold"
-              >
-                Choisir un PDF
-              </label>
+            {/* SELECTION DU PDF */}
+            {scope === "pdf" && (
+              <div>
+                <label
+                  htmlFor="chat-pdf"
+                  className="mb-2 block text-sm font-semibold"
+                >
+                  Choisir un PDF
+                </label>
 
-              <select
-                id="chat-pdf"
-                value={pdfId}
-                onChange={(event) => {
-                  setPdfId(event.target.value);
-                  setResult(null);
-                }}
-                disabled={!courseId || loadingPdfs}
-                className="w-full rounded-xl border border-[#E8DADD] bg-[#FAF6F4] px-4 py-3 text-sm text-[#525871] outline-none focus:border-[#CD9FA0] disabled:opacity-60"
-              >
-                <option value="">
-                  {loadingPdfs
-                    ? "Chargement des PDF..."
-                    : "Sélectionner un PDF"}
-                </option>
-
-                {pdfs.map((pdf) => (
-                  <option
-                    key={getId(pdf)}
-                    value={getId(pdf)}
-                  >
-                    {pdf.filename || pdf.name || "PDF"}
+                <select
+                  id="chat-pdf"
+                  value={pdfId}
+                  onChange={(event) => {
+                    setPdfId(event.target.value);
+                    setResult(null);
+                    setError("");
+                  }}
+                  disabled={!courseId || loadingPdfs}
+                  className="w-full rounded-xl border border-[#E8DADD] bg-[#FAF6F4] px-4 py-3 text-sm outline-none disabled:opacity-60"
+                >
+                  <option value="">
+                    {loadingPdfs
+                      ? "Chargement des PDF..."
+                      : "Sélectionner un PDF"}
                   </option>
-                ))}
-              </select>
 
-              {courseId && !loadingPdfs && pdfs.length === 0 && (
-                <p className="mt-2 text-xs text-[#857C91]">
-                  Aucun PDF disponible dans ce cours.
+                  {pdfs.map((pdf) => (
+                    <option
+                      key={getId(pdf)}
+                      value={getId(pdf)}
+                    >
+                      {pdf.filename || "Document PDF"}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* INFORMATIONS */}
+            {courseId && (
+              <div className="rounded-xl bg-[#F5E3E0] p-4 text-sm">
+                <p className="font-semibold">
+                  {selectedCourse?.title ||
+                    selectedCourse?.name ||
+                    "Cours sélectionné"}
                 </p>
-              )}
-            </div>
+
+                <p className="mt-1 text-xs text-[#857C91]">
+                  {scope === "course"
+                    ? "Mode : tous les PDF du cours"
+                    : selectedPdf
+                      ? "Document : " + selectedPdf.filename
+                      : "Sélectionne un PDF pour continuer"}
+                </p>
+              </div>
+            )}
 
             {/* QUESTION */}
             <div>
@@ -532,10 +676,10 @@ export default function ChatPage() {
                 onChange={(event) =>
                   setQuestion(event.target.value)
                 }
-                placeholder="Exemple : Quels sont les 5 V du Big Data ?"
+                placeholder="Exemple : Explique les composants de Hadoop."
                 rows={5}
                 maxLength={2000}
-                className="w-full resize-y rounded-xl border border-[#E8DADD] bg-[#FAF6F4] px-4 py-3 text-sm text-[#525871] outline-none placeholder:text-[#AFA3AD] focus:border-[#CD9FA0]"
+                className="w-full resize-y rounded-xl border border-[#E8DADD] bg-[#FAF6F4] px-4 py-3 text-sm outline-none placeholder:text-[#AFA3AD] focus:border-[#CD9FA0]"
               />
 
               <p className="mt-2 text-right text-xs text-[#A38E98]">
@@ -543,20 +687,20 @@ export default function ChatPage() {
               </p>
             </div>
 
-            {/* BOUTON */}
+            {/* ENVOYER */}
             <button
               type="submit"
               disabled={
-                loading ||
+                loadingAnswer ||
                 !courseId ||
-                !pdfId ||
+                (scope === "pdf" && !pdfId) ||
                 !question.trim()
               }
-              className="inline-flex items-center gap-3 rounded-full bg-[#525871] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#857C91] disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center gap-3 rounded-full bg-[#525871] px-6 py-3 text-sm font-semibold text-white hover:bg-[#857C91] disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Icon name="send" />
 
-              {loading
+              {loadingAnswer
                 ? "Gemini réfléchit..."
                 : "Envoyer ma question"}
             </button>
@@ -577,56 +721,78 @@ export default function ChatPage() {
         {result && (
           <section className="mt-7 overflow-hidden rounded-3xl border border-[#E8DADD] bg-white shadow-sm">
 
-            <div className="bg-[#F5E3E0] px-6 py-5 md:px-8">
-              <div className="flex items-center gap-3">
-                <div className="rounded-full bg-white/70 p-3">
-                  <Icon name="sparkles" />
-                </div>
+            <div className="bg-[#F5E3E0] px-6 py-5">
+              <h3
+                className="text-2xl"
+                style={{ fontFamily: "Georgia, serif" }}
+              >
+                Réponse du Chatbot
+              </h3>
 
-                <div>
-                  <h3
-                    className="text-2xl"
-                    style={{ fontFamily: "Georgia, serif" }}
-                  >
-                    Réponse du chatbot
-                  </h3>
-
-                  <p className="mt-1 text-xs text-[#857C91]">
-                    Basée sur les passages de ton cours
-                  </p>
-                </div>
-              </div>
+              <p className="mt-2 text-xs text-[#857C91]">
+                Réponse générée à partir des documents.
+              </p>
             </div>
 
-            <div className="p-6 md:p-8">
-              <div className="whitespace-pre-wrap break-words text-sm leading-8 text-[#525871]">
+            <div className="p-6">
+
+              <div className="whitespace-pre-wrap text-sm leading-8">
                 {formatAnswer(result.answer)}
               </div>
 
-              {/* PAGES SOURCES */}
-              {result.source_pages?.length > 0 && (
-                <div className="mt-7 border-t border-[#EFE5E6] pt-6">
-                  <h4 className="mb-3 text-sm font-semibold">
-                    Pages des passages consultés
-                  </h4>
+              {/* SOURCES MULTI-PDF */}
+              {Array.isArray(result.sources) &&
+                result.sources.length > 0 && (
+                  <div className="mt-7 border-t border-[#E8DADD] pt-5">
+                    <h4 className="mb-3 font-semibold">
+                      Documents sources
+                    </h4>
 
-                  <div className="flex flex-wrap gap-2">
-                    {result.source_pages.map((page) => (
-                      <span
-                        key={page}
-                        className="rounded-full bg-[#F5E3E0] px-4 py-2 text-xs font-medium text-[#525871]"
-                      >
-                        Page {page}
-                      </span>
-                    ))}
+                    <div className="flex flex-wrap gap-2">
+                      {result.sources.map((source, index) => (
+                        <span
+                          key={index}
+                          className="rounded-full bg-[#F5E3E0] px-4 py-2 text-xs"
+                        >
+                          {source.filename ||
+                            source.pdf_name ||
+                            "Document"}
+                          {source.page
+                            ? " — Page " + source.page
+                            : ""}
+                        </span>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
+
+              {/* SOURCES PDF UNIQUE */}
+              {(!result.sources ||
+                result.sources.length === 0) &&
+                Array.isArray(result.source_pages) &&
+                result.source_pages.length > 0 && (
+                  <div className="mt-7 border-t border-[#E8DADD] pt-5">
+                    <h4 className="mb-3 font-semibold">
+                      Pages sources
+                    </h4>
+
+                    <div className="flex flex-wrap gap-2">
+                      {result.source_pages.map((page) => (
+                        <span
+                          key={page}
+                          className="rounded-full bg-[#F5E3E0] px-4 py-2 text-xs"
+                        >
+                          Page {page}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
             </div>
           </section>
         )}
 
-        {/* MESSAGE EN BAS */}
         <p className="mt-8 text-center text-xs text-[#A38E98]">
           StudyMind ♡ Your peaceful learning space
         </p>
