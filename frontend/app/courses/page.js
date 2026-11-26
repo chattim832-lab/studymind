@@ -1,700 +1,179 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-
-const API_URL = "http://127.0.0.1:8001";
-
-const COVERS = [
-  "linear-gradient(135deg, #CD9FA0, #F2C1A3)",
-  "linear-gradient(135deg, #857C91, #CD9FA0)",
-  "linear-gradient(135deg, #F2C1A3, #F8CCAA)",
-  "linear-gradient(135deg, #525871, #857C91)",
-];
-
-function Icon({ name }) {
-  return (
-    <svg
-      width="19"
-      height="19"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.7"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      {name === "dashboard" && (
-        <>
-          <rect x="3" y="3" width="7" height="7" rx="1" />
-          <rect x="14" y="3" width="7" height="7" rx="1" />
-          <rect x="3" y="14" width="7" height="7" rx="1" />
-          <rect x="14" y="14" width="7" height="7" rx="1" />
-        </>
-      )}
-
-      {name === "book" && (
-        <>
-          <path d="M12 6c-3-2-6-2-9-1v14c3-1 6-1 9 1" />
-          <path d="M12 6c3-2 6-2 9-1v14c-3-1-6-1-9 1" />
-          <path d="M12 6v14" />
-        </>
-      )}
-
-      {name === "chat" && (
-        <path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H5l1.7-3.4A7.5 7.5 0 1 1 20 11.5Z" />
-      )}
-
-      {name === "logout" && (
-        <>
-          <path d="M9 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4" />
-          <path d="M15 16l4-4-4-4" />
-          <path d="M19 12H9" />
-        </>
-      )}
-
-      {name === "search" && (
-        <>
-          <circle cx="10.5" cy="10.5" r="6.5" />
-          <path d="m16 16 5 5" />
-        </>
-      )}
-
-      {name === "file" && (
-        <>
-          <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z" />
-          <path d="M13 2v7h7" />
-          <path d="M8 14h8M8 18h6" />
-        </>
-      )}
-
-      {name === "trash" && (
-        <>
-          <path d="M3 6h18M8 6V4h8v2M6 6l1 15h10l1-15" />
-          <path d="M10 10v7M14 10v7" />
-        </>
-      )}
-    </svg>
-  );
-}
-
-function MenuLink({ href, icon, children, active = false }) {
-  return (
-    <Link
-      href={href}
-      className={
-        "flex items-center gap-3 rounded-xl px-4 py-3 text-sm transition " +
-        (active
-          ? "bg-[#E6D4D9] font-semibold text-[#525871]"
-          : "text-[#857C91] hover:bg-white/70 hover:text-[#525871]")
-      }
-    >
-      <Icon name={icon} />
-      {children}
-    </Link>
-  );
-}
-
-function courseIdOf(course) {
-  return String(course.id || course._id || "");
-}
+import StudyShell, { apiRequest, getId } from "../_components/StudyShell";
+import CourseFolder from "../_components/CourseFolder";
 
 function formatSize(bytes) {
   if (typeof bytes !== "number") return "";
-  if (bytes < 1024) return bytes + " o";
-  return (bytes / (1024 * 1024)).toFixed(2) + " Mo";
+  return bytes < 1024 ? bytes + " o" : (bytes / 1048576).toFixed(2) + " Mo";
 }
 
 export default function CoursesPage() {
-  const router = useRouter();
-
   const [courses, setCourses] = useState([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
-
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
-
+  const [notice, setNotice] = useState("");
   const [expandedId, setExpandedId] = useState("");
   const [pdfsByCourse, setPdfsByCourse] = useState({});
-  const [loadingPdfsId, setLoadingPdfsId] = useState("");
-
   const [selectedFiles, setSelectedFiles] = useState({});
-  const [uploadingId, setUploadingId] = useState("");
-  const [deletingId, setDeletingId] = useState("");
+  const [busyId, setBusyId] = useState("");
 
-  // 1. Charger les cours
   useEffect(() => {
-    const token = sessionStorage.getItem("studymind_token");
-
-    if (!token) {
-      router.replace("/login");
-      return;
-    }
-
     let active = true;
-
-    async function loadCourses() {
+    async function load() {
       try {
-        const response = await fetch(API_URL + "/courses", {
-          headers: {
-            Authorization: "Bearer " + token,
-          },
-        });
-
-        if (response.status === 401) {
-          router.replace("/login");
-          return;
-        }
-
-        if (!response.ok) {
-          throw new Error("Impossible de charger les cours.");
-        }
-
-        const data = await response.json();
-
-        if (active) {
-          setCourses(
-            Array.isArray(data) ? data : data.courses || []
-          );
-        }
+        const data = await apiRequest("/courses");
+        if (active) setCourses(Array.isArray(data) ? data : data.courses || []);
       } catch (err) {
-        if (active) {
-          setError(err.message);
-        }
+        if (active) setError(err.message);
       } finally {
-        if (active) {
-          setLoading(false);
-        }
+        if (active) setLoading(false);
       }
     }
+    load();
+    return () => { active = false; };
+  }, []);
 
-    loadCourses();
+  const filtered = useMemo(() => courses.filter((course) => String(course.title || course.name || "").toLowerCase().includes(search.toLowerCase())), [courses, search]);
 
-    return () => {
-      active = false;
-    };
-  }, [router]);
-
-  // 2. Recuperer le token
-  function getToken() {
-    const token = sessionStorage.getItem("studymind_token");
-
-    if (!token) {
-      router.replace("/login");
-    }
-
-    return token;
+  async function refreshPdfs(id) {
+    const data = await apiRequest("/courses/" + encodeURIComponent(id) + "/pdfs");
+    setPdfsByCourse((previous) => ({ ...previous, [id]: Array.isArray(data) ? data : data.pdfs || [] }));
   }
 
-  // 3. Charger les PDF d'un cours
-  async function loadPdfs(id) {
-    const token = getToken();
-    if (!token) return;
-
-    setLoadingPdfsId(id);
-
-    try {
-      const response = await fetch(
-        API_URL + "/courses/" + encodeURIComponent(id) + "/pdfs",
-        {
-          headers: {
-            Authorization: "Bearer " + token,
-          },
-        }
-      );
-
-      if (response.status === 401) {
-        router.replace("/login");
-        return;
-      }
-
-      if (!response.ok) {
-        throw new Error("Impossible de charger les PDF.");
-      }
-
-      const data = await response.json();
-
-      setPdfsByCourse((prev) => ({
-        ...prev,
-        [id]: Array.isArray(data) ? data : data.pdfs || [],
-      }));
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoadingPdfsId("");
-    }
-  }
-
-  // 4. Afficher ou masquer les PDF
   async function togglePdfs(id) {
     setError("");
-    setMessage("");
-
-    if (expandedId === id) {
-      setExpandedId("");
-      return;
-    }
-
+    if (expandedId === id) { setExpandedId(""); return; }
     setExpandedId(id);
-
-    if (!Object.prototype.hasOwnProperty.call(pdfsByCourse, id)) {
-      await loadPdfs(id);
-    }
+    if (Object.prototype.hasOwnProperty.call(pdfsByCourse, id)) return;
+    setBusyId(id);
+    try { await refreshPdfs(id); } catch (err) { setError(err.message); }
+    finally { setBusyId(""); }
   }
 
-  // 5. Ajouter un PDF
   async function handleUpload(event, id) {
     event.preventDefault();
-
     const form = event.currentTarget;
     const file = selectedFiles[id];
-
-    if (!file) {
-      setError("Choisissez un PDF avant de l'envoyer.");
-      return;
+    if (!file) { setError("Sélectionne un PDF d'abord."); return; }
+    if (!file.name.toLowerCase().endsWith(".pdf") || file.size > 10 * 1048576) {
+      setError("Choisis un PDF de 10 Mo maximum."); return;
     }
-
-    if (
-      !file.name.toLowerCase().endsWith(".pdf") ||
-      file.size > 10 * 1024 * 1024
-    ) {
-      setError("Choisissez un PDF de 10 Mo maximum.");
-      return;
-    }
-
-    const token = getToken();
-    if (!token) return;
-
     const body = new FormData();
     body.append("file", file);
-
-    setUploadingId(id);
-    setError("");
-    setMessage("");
-
+    setBusyId(id); setError(""); setNotice("");
     try {
-      const response = await fetch(
-        API_URL + "/courses/" + encodeURIComponent(id) + "/pdfs",
-        {
-          method: "POST",
-          headers: {
-            Authorization: "Bearer " + token,
-          },
-          body,
-        }
-      );
-
-      if (response.status === 401) {
-        router.replace("/login");
-        return;
-      }
-
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-
-        throw new Error(
-          typeof data.detail === "string"
-            ? data.detail
-            : "Erreur lors de l'envoi du PDF."
-        );
-      }
-
-      setSelectedFiles((prev) => ({
-        ...prev,
-        [id]: null,
-      }));
-
+      await apiRequest("/courses/" + encodeURIComponent(id) + "/pdfs", { method: "POST", body });
+      await refreshPdfs(id);
+      setSelectedFiles((previous) => ({ ...previous, [id]: null }));
       form.reset();
-      setMessage("PDF ajouté avec succès.");
-
-      await loadPdfs(id);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setUploadingId("");
-    }
+      setNotice("PDF ajouté avec succès.");
+    } catch (err) { setError(err.message); }
+    finally { setBusyId(""); }
   }
 
-  // 6. Supprimer un cours
-  async function handleDelete(id) {
-    const confirmed = window.confirm(
-      "Voulez-vous supprimer ce cours et tous ses PDF ?"
-    );
-
-    if (!confirmed) return;
-
-    const token = getToken();
-    if (!token) return;
-
-    setDeletingId(id);
+  // Supprimer un PDF d'un cours sans supprimer le cours lui-meme.
+  async function handleDeletePdf(courseId, pdf) {
+    const pdfId = getId(pdf);
+    if (!window.confirm("Supprimer le PDF « " + (pdf.filename || "Document") + " » ?")) return;
+    setBusyId(courseId);
     setError("");
-    setMessage("");
-
+    setNotice("");
     try {
-      const response = await fetch(
-        API_URL + "/courses/" + encodeURIComponent(id),
-        {
-          method: "DELETE",
-          headers: {
-            Authorization: "Bearer " + token,
-          },
-        }
+      await apiRequest(
+        "/courses/" + encodeURIComponent(courseId) + "/pdfs/" + encodeURIComponent(pdfId),
+        { method: "DELETE" }
       );
-
-      if (response.status === 401) {
-        router.replace("/login");
-        return;
-      }
-
-      if (!response.ok) {
-        throw new Error("Impossible de supprimer le cours.");
-      }
-
-      setCourses((prev) =>
-        prev.filter((course) => courseIdOf(course) !== id)
-      );
-
-      if (expandedId === id) {
-        setExpandedId("");
-      }
-
-      setMessage("Cours supprimé avec succès.");
+      setPdfsByCourse((previous) => ({
+        ...previous,
+        [courseId]: (previous[courseId] || []).filter((item) => getId(item) !== pdfId),
+      }));
+      setNotice("PDF supprimé avec succès.");
     } catch (err) {
       setError(err.message);
     } finally {
-      setDeletingId("");
+      setBusyId("");
     }
   }
 
-  // 7. Deconnexion
-  function handleLogout() {
-    sessionStorage.removeItem("studymind_token");
-    router.replace("/login");
+  async function handleDelete(id) {
+    if (!window.confirm("Supprimer ce cours et tous ses PDF définitivement ?")) return;
+    setBusyId(id); setError(""); setNotice("");
+    try {
+      await apiRequest("/courses/" + encodeURIComponent(id), { method: "DELETE" });
+      setCourses((previous) => previous.filter((course) => getId(course) !== id));
+      if (expandedId === id) setExpandedId("");
+      setNotice("Cours supprimé avec succès.");
+    } catch (err) { setError(err.message); }
+    finally { setBusyId(""); }
   }
-
-  // 8. Rechercher un cours
-  const filteredCourses = courses.filter((course) =>
-    (course.title || course.name || "")
-      .toLowerCase()
-      .includes(search.toLowerCase())
-  );
 
   return (
-    <div className="min-h-screen bg-[#FAF6F4] text-[#525871] md:flex">
-
-      {/* SIDEBAR */}
-      <aside className="flex w-full shrink-0 flex-col border-b border-[#E7DADD] bg-[#F3E9E7] p-5 md:sticky md:top-0 md:h-screen md:w-60 md:border-b-0 md:border-r">
-
-        <div className="mb-8 px-3 pt-3">
-          <h1
-            className="text-3xl font-semibold"
-            style={{ fontFamily: "Georgia, serif" }}
-          >
-            StudyMind
-          </h1>
-
-          <p className="mt-1 text-xs tracking-widest text-[#857C91]">
-            YOUR STUDY SPACE
-          </p>
+    <StudyShell>
+      <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
+        <div><p className="text-xs font-semibold uppercase tracking-[.21em] text-[#93A8AD]">YOUR LIBRARY</p><h1 className="mt-1 font-serif text-4xl">Mes cours</h1><p className="mt-2 text-sm text-[#917F73]">Tous tes cours, rangés dans de jolis dossiers.</p></div>
+        <Link href="/courses/new" className="rounded-full bg-[#684F48] px-5 py-3 text-sm font-semibold text-white hover:bg-[#8B6F66]">+ Nouveau cours</Link>
+      </header>
+      <div className="mb-8 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-[#E1E9E6] bg-[#F4FAF9] px-5 py-4">
+        <p className="font-serif text-xl">{loading ? "…" : courses.length} <span className="text-sm text-[#7B9295]">cours enregistrés</span></p>
+        <label className="flex items-center gap-2 rounded-full bg-white px-4 py-2.5 shadow-sm"><span className="text-[#93A8AD]">⌕</span><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Rechercher un cours" className="w-40 bg-transparent text-sm outline-none sm:w-56"/></label>
+      </div>
+      {error && <p role="alert" className="mb-5 rounded-xl bg-[#F9E7C7] p-4 text-sm">{error}</p>}
+      {notice && <p role="status" className="mb-5 rounded-xl bg-[#D6E9ED] p-4 text-sm">{notice}</p>}
+      {loading ? <p>Chargement des cours…</p> : filtered.length === 0 ? (
+        <div className="rounded-3xl border border-dashed border-[#93A8AD] bg-white p-10 text-center"><p>{search ? "Aucun cours trouvé." : "Tu n'as pas encore de cours."}</p><Link href="/courses/new" className="mt-4 inline-block rounded-full bg-[#684F48] px-5 py-3 text-sm text-white">Ajouter un cours</Link></div>
+      ) : (
+        <div className="grid items-start gap-x-5 gap-y-10 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+          {filtered.map((course, index) => {
+            const id = getId(course);
+            const open = expandedId === id;
+            const pdfs = pdfsByCourse[id] || [];
+            return (
+              <article key={id} className="min-w-0">
+                {/* Whole illustrated folder navigates to this course. */}
+                <CourseFolder course={course} index={index}/>
+                <div className="mt-3 flex flex-wrap gap-2 px-1">
+                  <button type="button" aria-expanded={open} onClick={() => togglePdfs(id)} disabled={Boolean(busyId)} className="rounded-full border border-[#C8D8D9] bg-[#D6E9ED] px-3 py-2 text-[11px] font-semibold hover:bg-[#C8DDE1] disabled:opacity-60">{open ? "Masquer PDF" : "Voir les PDF"}</button>
+                  <button type="button" onClick={() => handleDelete(id)} disabled={Boolean(busyId)} className="rounded-full border border-[#E6D1C9] bg-white px-3 py-2 text-[11px] text-[#684F48] hover:bg-[#F9E7C7] disabled:opacity-60">Supprimer</button>
+                </div>
+                {open && <div className="mt-3 space-y-4 rounded-2xl border border-[#DFE8E5] bg-white p-4 shadow-sm">
+                  <p className="text-xs font-bold uppercase tracking-wider text-[#93A8AD]">Documents PDF</p>
+                  {busyId === id && !Object.prototype.hasOwnProperty.call(pdfsByCourse, id) ? <p className="text-xs">Chargement…</p> : pdfs.length === 0 ? <p className="text-xs text-[#8F8173]">Aucun PDF pour le moment.</p> : (
+                    <ul className="space-y-3">
+                      {pdfs.map((pdf) => {
+                        const pdfId = getId(pdf);
+                        const chatLink = "/chat?course_id=" + encodeURIComponent(id) + "&pdf_id=" + encodeURIComponent(pdfId);
+                        return (
+                          <li key={pdfId} className="rounded-xl border border-[#DCE8E6] bg-[#FFFDF8] p-3 text-xs">
+                            <p className="break-words font-semibold">📄 {pdf.filename || "Document.pdf"}</p>
+                            <p className="mt-1 text-[11px] text-[#93A8AD]">{formatSize(pdf.size_bytes)}</p>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <Link href={chatLink} className="rounded-full bg-[#684F48] px-3 py-2 font-semibold text-white hover:bg-[#80645A]">Chatbot PDF</Link>
+                              <Link href={"/revision?course_id=" + encodeURIComponent(id) + "&pdf_id=" + encodeURIComponent(pdfId) + "&tab=summary"} className="rounded-full bg-[#D6E9ED] px-3 py-2 font-semibold">Résumé</Link>
+                              <Link href={"/revision?course_id=" + encodeURIComponent(id) + "&pdf_id=" + encodeURIComponent(pdfId) + "&tab=sheet"} className="rounded-full bg-[#D6E9ED] px-3 py-2 font-semibold">Fiche</Link>
+                              <Link href={"/revision?course_id=" + encodeURIComponent(id) + "&pdf_id=" + encodeURIComponent(pdfId) + "&tab=quiz"} className="rounded-full bg-[#F9E7C7] px-3 py-2 font-semibold">QCM</Link>
+                              <button type="button" disabled={Boolean(busyId)} onClick={() => handleDeletePdf(id, pdf)} className="rounded-full border border-[#CDAFA2] bg-white px-3 py-2 font-semibold text-[#684F48] hover:bg-[#F9E7C7] disabled:opacity-50">Supprimer PDF</button>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                  <form onSubmit={(event) => handleUpload(event, id)} className="space-y-2">
+                    <label className="block text-xs font-semibold" htmlFor={"pdf-" + id}>Ajouter un PDF (10 Mo max)</label>
+                    <input id={"pdf-" + id} type="file" accept=".pdf,application/pdf" onChange={(event) => setSelectedFiles((old) => ({ ...old, [id]: event.target.files?.[0] || null }))} className="block w-full text-[11px] file:mr-2 file:rounded-full file:border-0 file:bg-[#D6E9ED] file:px-3 file:py-2"/>
+                    <button type="submit" disabled={Boolean(busyId)} className="w-full rounded-xl bg-[#684F48] px-3 py-2.5 text-xs font-semibold text-white disabled:opacity-50">{busyId === id ? "En cours…" : "Ajouter ce PDF"}</button>
+                  </form>
+                  <Link href={"/courses/" + encodeURIComponent(id)} className="block text-center text-xs font-semibold underline underline-offset-4">Voir tous les outils du cours</Link>
+                </div>}
+              </article>
+            );
+          })}
         </div>
-
-        <p className="mb-3 px-4 text-xs uppercase tracking-widest text-[#A38E98]">
-          Menu
-        </p>
-
-        <nav className="flex flex-col gap-2">
-          <MenuLink href="/dashboard" icon="dashboard">
-            Dashboard
-          </MenuLink>
-
-          <MenuLink href="/courses" icon="book" active>
-            Mes cours
-          </MenuLink>
-
-          <MenuLink href="/chat" icon="chat">
-            Chatbot IA
-          </MenuLink>
-        </nav>
-
-        <div className="mt-8 rounded-2xl bg-[#E8D8DD] p-4 md:mt-auto">
-          <p className="text-sm font-semibold">
-            Your learning companion
-          </p>
-
-          <p className="mt-2 text-xs text-[#857C91]">
-            Organise tes cours et révise à ton rythme.
-          </p>
-        </div>
-
-        <button
-          onClick={handleLogout}
-          className="mt-5 flex items-center gap-3 rounded-xl px-4 py-3 text-sm text-[#857C91] hover:bg-white/70"
-        >
-          <Icon name="logout" />
-          Déconnexion
-        </button>
-      </aside>
-
-      {/* CONTENU */}
-      <main className="min-w-0 flex-1 px-5 py-7 md:px-9">
-
-        <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <h2
-              className="text-4xl"
-              style={{ fontFamily: "Georgia, serif" }}
-            >
-              Mes cours
-            </h2>
-
-            <p className="mt-2 text-sm text-[#857C91]">
-              Tous tes supports de cours, au même endroit ♡
-            </p>
-          </div>
-
-          <Link
-            href="/courses/new"
-            className="rounded-full bg-[#525871] px-5 py-3 text-sm font-semibold text-white hover:bg-[#857C91]"
-          >
-            + Ajouter un cours
-          </Link>
-        </header>
-
-        {/* RECHERCHE */}
-        <section className="mb-7 flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-[#E8DADD] bg-white p-5 shadow-sm">
-
-          <div>
-            <p className="text-sm text-[#857C91]">
-              Cours enregistrés
-            </p>
-
-            <p
-              className="mt-1 text-3xl"
-              style={{ fontFamily: "Georgia, serif" }}
-            >
-              {loading ? "..." : courses.length}
-            </p>
-          </div>
-
-          <label className="flex items-center gap-2 rounded-full border border-[#E8DADD] bg-[#FAF6F4] px-4 py-3">
-            <Icon name="search" />
-
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Rechercher un cours..."
-              className="w-44 bg-transparent text-sm outline-none placeholder:text-[#AFA3AD] sm:w-56"
-            />
-          </label>
-        </section>
-
-        {error && (
-          <p
-            role="alert"
-            className="mb-5 rounded-xl bg-[#F7E2E2] p-4 text-sm text-[#8A3F48]"
-          >
-            {error}
-          </p>
-        )}
-
-        {message && (
-          <p className="mb-5 rounded-xl bg-[#F1E9E7] p-4 text-sm">
-            {message}
-          </p>
-        )}
-
-        {/* LISTE DES COURS */}
-        {loading ? (
-          <p>Chargement des cours...</p>
-        ) : filteredCourses.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-[#CD9FA0] bg-white p-8 text-center">
-            <p>Aucun cours à afficher.</p>
-
-            <Link
-              href="/courses/new"
-              className="mt-4 inline-block rounded-full bg-[#525871] px-5 py-3 text-sm text-white"
-            >
-              Ajouter un cours
-            </Link>
-          </div>
-        ) : (
-          <div className="grid items-start gap-6 lg:grid-cols-2">
-
-            {filteredCourses.map((course, index) => {
-              const id = courseIdOf(course);
-              const title = course.title || course.name || "Cours";
-              const pdfs = pdfsByCourse[id] || [];
-              const isOpen = expandedId === id;
-
-              return (
-                <article
-                  key={id}
-                  className="group relative isolate overflow-hidden rounded-3xl border border-[#E8DADD] bg-white shadow-sm transition-shadow hover:shadow-lg"
-                >
-
-                  {/* NOUVEAU : TOUTE LA CARTE EST CLIQUABLE */}
-                  <Link
-                    href={
-                      "/courses/" + encodeURIComponent(id)
-                    }
-                    className="absolute inset-0 z-10 cursor-pointer rounded-3xl focus-visible:outline-2 focus-visible:outline-[#525871]"
-                    aria-label={"Ouvrir le cours " + title}
-                  >
-                    <span className="sr-only">
-                      Ouvrir le cours {title}
-                    </span>
-                  </Link>
-
-                  {/* COUVERTURE */}
-                  <div
-                    className="relative h-36 overflow-hidden p-5"
-                    style={{
-                      background: COVERS[index % COVERS.length],
-                    }}
-                  >
-                    <div className="absolute -right-7 -top-9 h-44 w-44 rounded-full border-[17px] border-white/20" />
-
-                    <div className="absolute bottom-0 left-9 h-20 w-20 rotate-12 rounded-xl border border-white/40 bg-white/10" />
-
-                    <span className="relative rounded-full bg-white/70 px-3 py-1 text-xs">
-                      StudyMind Course
-                    </span>
-                  </div>
-
-                  {/* INFORMATIONS */}
-                  <div className="p-5">
-
-                    <h3
-                      className="text-2xl"
-                      style={{ fontFamily: "Georgia, serif" }}
-                    >
-                      {title}
-                    </h3>
-
-                    {course.description && (
-                      <p className="mt-2 text-sm leading-6 text-[#857C91]">
-                        {course.description}
-                      </p>
-                    )}
-
-                    <p className="mt-4 text-sm font-medium text-[#CD9FA0]">
-                      Ouvrir le cours →
-                    </p>
-
-                    {/* Z-20 : LES BOUTONS RESTENT CLIQUABLES */}
-                    <div className="relative z-20 mt-5 flex flex-wrap gap-2">
-
-                      <button
-                        type="button"
-                        onClick={() => togglePdfs(id)}
-                        aria-expanded={isOpen}
-                        className="rounded-full bg-[#F5E3E0] px-4 py-2 text-sm font-medium hover:bg-[#F2C1A3]"
-                      >
-                        {isOpen
-                          ? "Masquer les PDF"
-                          : "Voir les PDF et ajouter"}
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(id)}
-                        disabled={deletingId === id}
-                        className="inline-flex items-center gap-2 rounded-full border border-[#E8DADD] px-4 py-2 text-sm text-[#8A4C59] hover:bg-[#F7E2E2] disabled:opacity-50"
-                      >
-                        <Icon name="trash" />
-
-                        {deletingId === id
-                          ? "Suppression..."
-                          : "Supprimer"}
-                      </button>
-                    </div>
-
-                    {/* PDF : RESTENT ACCESSIBLES */}
-                    {isOpen && (
-                      <div className="relative z-20 mt-5 border-t border-[#EFE5E6] pt-5">
-
-                        <h4 className="mb-3 font-semibold">
-                          Fichiers PDF
-                        </h4>
-
-                        {loadingPdfsId === id ? (
-                          <p className="text-sm text-[#857C91]">
-                            Chargement des PDF...
-                          </p>
-                        ) : pdfs.length === 0 ? (
-                          <p className="text-sm text-[#857C91]">
-                            Aucun PDF dans ce cours.
-                          </p>
-                        ) : (
-                          <ul className="space-y-2">
-                            {pdfs.map((pdf) => (
-                              <li
-                                key={pdf.id || pdf._id}
-                                className="flex items-center gap-2 rounded-xl bg-[#FAF6F4] px-3 py-3 text-sm"
-                              >
-                                <Icon name="file" />
-
-                                <span className="min-w-0 flex-1 break-words">
-                                  {pdf.filename || "Document PDF"}
-                                </span>
-
-                                <span className="text-xs text-[#857C91]">
-                                  {formatSize(pdf.size_bytes)}
-                                </span>
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-
-                        {/* UPLOAD PDF */}
-                        <form
-                          onSubmit={(event) =>
-                            handleUpload(event, id)
-                          }
-                          className="mt-5 space-y-3"
-                        >
-
-                          <label className="block text-sm font-semibold">
-                            Ajouter un PDF (10 Mo max)
-                          </label>
-
-                          <input
-                            type="file"
-                            accept=".pdf,application/pdf"
-                            onChange={(event) =>
-                              setSelectedFiles((prev) => ({
-                                ...prev,
-                                [id]: event.target.files?.[0] || null,
-                              }))
-                            }
-                            className="block w-full rounded-xl border border-[#E8DADD] p-3 text-sm"
-                          />
-
-                          <button
-                            type="submit"
-                            disabled={
-                              !selectedFiles[id] ||
-                              uploadingId === id
-                            }
-                            className="rounded-full bg-[#525871] px-5 py-2.5 text-sm font-medium text-white hover:bg-[#857C91] disabled:opacity-50"
-                          >
-                            {uploadingId === id
-                              ? "Envoi..."
-                              : "Envoyer le PDF"}
-                          </button>
-                        </form>
-                      </div>
-                    )}
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        )}
-      </main>
-    </div>
+      )}
+    </StudyShell>
   );
 }
