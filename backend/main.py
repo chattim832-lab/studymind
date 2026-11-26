@@ -596,3 +596,8 @@ async def chat_with_course(
 
 
 
+
+
+# SPRINT 3 : Resumes, fiches, QCM et progression
+from study_routes import router as study_router
+app.include_router(study_router)

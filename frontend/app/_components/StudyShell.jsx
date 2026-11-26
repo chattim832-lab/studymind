@@ -9,56 +9,54 @@ export function getId(item) {
   return String(item?.id || item?._id || "");
 }
 
-// Tous les appels API utilisent le JWT de la session actuelle.
+// Keep the original FastAPI/JWT and PDF-upload behavior.
 export async function apiRequest(path, options = {}) {
   const token = sessionStorage.getItem("studymind_token");
   if (!token) {
     window.location.assign("/login");
     throw new Error("Veuillez vous connecter.");
   }
-
   const headers = {
     Authorization: "Bearer " + token,
     ...(options.headers || {}),
   };
   let body = options.body;
-
-  // JSON pour les POST classiques, FormData pour l'upload des PDF.
   if (body !== undefined && body !== null && !(body instanceof FormData)) {
     headers["Content-Type"] = "application/json";
     if (typeof body !== "string") body = JSON.stringify(body);
   }
-
-  const response = await fetch(API_URL + path, {
-    ...options,
-    headers,
-    body,
-  });
-
+  const response = await fetch(API_URL + path, { ...options, headers, body });
   if (response.status === 401) {
     sessionStorage.removeItem("studymind_token");
     window.location.assign("/login");
     throw new Error("Votre session a expiré.");
   }
-
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const detail = typeof data?.detail === "string" ? data.detail : "";
-    if (response.status === 404 && path.startsWith("/study/")) {
-      throw new Error("Cette fonctionnalité nécessite le Backend du Sprint 3 (API non encore ajoutée).");
-    }
-    throw new Error(detail || "Erreur " + response.status + " lors de la requête.");
+    throw new Error(detail || "Erreur HTTP " + response.status);
   }
   return data;
 }
 
-const links = [
-  { href: "/dashboard", label: "Dashboard", icon: "▦" },
-  { href: "/courses", label: "Mes cours", icon: "▤" },
-  { href: "/chat", label: "Chatbot IA", icon: "✦" },
-  { href: "/revision", label: "Révision", icon: "✎" },
-  { href: "/progress", label: "Progression", icon: "◷" },
+const items = [
+  { href: "/dashboard", label: "Dashboard", icon: "dashboard" },
+  { href: "/courses", label: "Mes cours", icon: "folder" },
+  { href: "/chat", label: "Chatbot IA", icon: "chat" },
+  { href: "/revision", label: "Révision", icon: "book" },
 ];
+
+function NavIcon({ name }) {
+  return (
+    <svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {name === "dashboard" && <><rect x="3" y="3" width="7" height="7" rx="1.8"/><rect x="14" y="3" width="7" height="7" rx="1.8"/><rect x="3" y="14" width="7" height="7" rx="1.8"/><rect x="14" y="14" width="7" height="7" rx="1.8"/></>}
+      {name === "folder" && <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/>}
+      {name === "chat" && <><path d="M21 11.4a8.4 8.4 0 0 1-8.4 8.4H5l1.8-3.9A8.4 8.4 0 1 1 21 11.4Z"/><path d="M9 11.5h6"/></>}
+      {name === "book" && <><path d="M12 6c-3-1.8-6-1.8-9-1v14c3-.9 6-.9 9 1"/><path d="M12 6c3-1.8 6-1.8 9-1v14c-3-.9-6-.9-9 1"/><path d="M12 6v14"/></>}
+      {name === "logout" && <><path d="M9 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4"/><path d="M15 16l4-4-4-4M19 12H9"/></>}
+    </svg>
+  );
+}
 
 export default function StudyShell({ children }) {
   const pathname = usePathname();
@@ -70,53 +68,27 @@ export default function StudyShell({ children }) {
   }
 
   return (
-    <div className="min-h-screen bg-[#FAF6F4] text-[#525871] md:flex">
-      <aside className="flex w-full shrink-0 flex-col border-b border-[#E7DADD] bg-[#F3E9E7] p-5 md:sticky md:top-0 md:h-screen md:w-60 md:border-b-0 md:border-r">
-        <Link href="/dashboard" className="mb-8 block px-3 pt-3">
-          <h1 className="text-3xl font-semibold tracking-tight" style={{ fontFamily: "Georgia, serif" }}>
-            StudyMind
-          </h1>
-          <p className="mt-1 text-xs tracking-widest text-[#857C91]">YOUR STUDY SPACE</p>
+    <div className="min-h-screen bg-[#FFFDF8] text-[#684F48] md:flex">
+      {/* Small, fixed-width sidebar like reference image 1. */}
+      <aside className="z-20 flex w-full shrink-0 items-center justify-between border-b border-[#DDE9E7] bg-[#D6E9ED] px-3 py-2 md:sticky md:top-0 md:h-screen md:w-[78px] md:flex-col md:justify-start md:border-b-0 md:border-r md:px-2 md:py-5">
+        <Link href="/dashboard" title="StudyMind" aria-label="StudyMind, accueil" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[#684F48] text-[13px] font-bold tracking-tight text-[#F9E7C7] shadow-sm" style={{ fontFamily: "Georgia, serif" }}>
+          SM
         </Link>
-
-        <p className="mb-3 px-4 text-xs uppercase tracking-widest text-[#A38E98]">Menu</p>
-        <nav className="flex flex-col gap-2">
-          {links.map((link) => {
-            const active = pathname === link.href || (link.href === "/courses" && pathname.startsWith("/courses/"));
+        <nav className="flex items-center gap-1 md:mt-10 md:w-full md:flex-col md:gap-4" aria-label="Navigation principale">
+          {items.map((item) => {
+            const active = pathname === item.href || (item.href === "/courses" && pathname.startsWith("/courses/"));
             return (
-              <Link
-                key={link.href}
-                href={link.href}
-                aria-current={active ? "page" : undefined}
-                className={
-                  "flex items-center gap-3 rounded-xl px-4 py-3 text-sm transition " +
-                  (active
-                    ? "bg-[#E6D4D9] font-semibold text-[#525871]"
-                    : "text-[#857C91] hover:bg-white/70 hover:text-[#525871]")
-                }
-              >
-                <span aria-hidden="true" className="w-6 text-center text-lg">{link.icon}</span>
-                <span>{link.label}</span>
+              <Link key={item.href} href={item.href} title={item.label} aria-label={item.label} aria-current={active ? "page" : undefined} className={"flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-all hover:-translate-y-0.5 " + (active ? "bg-[#684F48] text-white shadow-sm" : "text-[#684F48] hover:bg-white/70")}>
+                <NavIcon name={item.icon}/>
               </Link>
             );
           })}
         </nav>
-
-        <div className="mt-8 rounded-2xl bg-[#E8D8DD] p-4 md:mt-auto">
-          <p className="text-sm font-semibold">Your learning companion</p>
-          <p className="mt-2 text-xs leading-5 text-[#857C91]">
-            Tes PDF, tes fiches et tes quiz, au même endroit.
-          </p>
-        </div>
-        <button
-          onClick={logout}
-          className="mt-5 rounded-xl px-4 py-3 text-left text-sm text-[#857C91] hover:bg-white/70"
-        >
-          Déconnexion
+        <button type="button" onClick={logout} aria-label="Déconnexion" title="Déconnexion" className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-[#684F48] transition hover:bg-white/70 md:mt-auto">
+          <NavIcon name="logout"/>
         </button>
       </aside>
-
-      <main className="min-w-0 flex-1 px-5 py-7 md:px-9 lg:px-12">{children}</main>
+      <main className="min-w-0 flex-1 px-4 py-6 sm:px-6 md:px-8 md:py-8 2xl:px-10">{children}</main>
     </div>
   );
 }
